@@ -114,7 +114,11 @@ async function start_answer_loop() {
     } else if (recognizer.textIncludes("example")) {
       answerQ("example");
       answered = true;
+    } else if (recognizer.textIncludes("sentence")) {
+      answerQ("example");
+      answered = true;
     }
+
 
     if (answered) recognizer.textClear();
 
@@ -151,15 +155,21 @@ async function start_spell_loop() {
     // get live spelling
     const liveSpelling = recognizer.getFinalText().replace(/\s+/g, "");
 
-    // ★★★★★ AUTO-END IF COMPLETE ★★★★★
-    if (
-      liveSpelling.length > 0 &&
-      liveSpelling.toLowerCase() === current_task.word.toLowerCase()
-    ) {
+    
+    if (liveSpelling.length > current_task.word.length){
+      clearInterval(spell_loop);
+      recognizer.stopRecognize();
+      add_dailog("\nYou spelled: " + liveSpelling)
+      add_dailog("\nWrong spelling! " + current_task.word);
+      add_dailog("\nSay next to spell next word");
+      start_wait_loop();
+      return;
+    }
+    if ( liveSpelling.toLowerCase() === current_task.word.toLowerCase() )
+     {
       clearInterval(spell_loop);
       recognizer.stopRecognize();
       const finalSpelling = liveSpelling;
-
       if (finalSpelling.toLowerCase() === current_task.word.toLowerCase()) {
         add_dailog("\nCorrect! You spelled " + finalSpelling);
       } else {
