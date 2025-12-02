@@ -154,7 +154,7 @@ async function start_spell_loop() {
 
 
 async function start_wait_loop(){
-    await speak(dialog.innerHTML);
+    await speak(dialog.innerText);
     lastRecognizeOptions = { prioritizeAlphabet: false, showDebug: true };
     recognizer.recognize(dialog, mic, lastRecognizeOptions);
 
