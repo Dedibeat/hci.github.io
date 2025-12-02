@@ -1,14 +1,14 @@
 // === main.js ===
 // Cleaned main UI + phase switching and faster spell checking
 
-import * as recognizer from './recognizer.js';
-import { data } from './data.js';
+import * as recognizer from "./recognizer.js";
+import { data } from "./data.js";
 
-const time_progress = document.querySelector('.time-progress');
-const mic = document.getElementById('mic');
-const dialog = document.getElementById('bee-text');
+const time_progress = document.querySelector(".time-progress");
+const mic = document.getElementById("mic");
+const dialog = document.getElementById("bee-text");
 const phase1 = 60; // seconds
-const phase2 = 20;  // seconds
+const phase2 = 20; // seconds
 
 let current_idx = 0;
 let current_task = data[0];
@@ -25,7 +25,7 @@ function speak(text, rate = 1, pitch = 1) {
       recognizer.stopRecognize();
 
       const utter = new SpeechSynthesisUtterance(text);
-      utter.lang = 'en-US';
+      utter.lang = "en-US";
       utter.rate = rate;
       utter.pitch = pitch;
 
@@ -47,30 +47,35 @@ function speak(text, rate = 1, pitch = 1) {
   });
 }
 
-
-function add_dailog(t) {dialog.innerHTML += '\n' + t; }
-function set_dialog(t) { dialog.innerText = t; }
-function clear_dialog() { dialog.innerText = ''; }
-function set_time_bar(p) { time_progress.style.width = p + '%'; }
-
-async function answerQ(q) {
-  let ans = '';
-  if (q === 'repeat') ans = current_task.pronunciation;
-  else if (q === 'definition') ans = current_task.definition;
-  else if (q === 'part') ans = current_task.part;
-  else if (q === 'example') ans = current_task.example;
-
-  set_dialog(ans);
-  if (q === 'repeat') await speak(current_task.word);
-  else await speak(ans);
-    recognizer.recognize(dialog, mic, lastRecognizeOptions);
+function add_dailog(t) {
+  dialog.innerHTML += "\n" + t;
+}
+function set_dialog(t) {
+  dialog.innerText = t;
+}
+function clear_dialog() {
+  dialog.innerText = "";
+}
+function set_time_bar(p) {
+  time_progress.style.width = p + "%";
 }
 
+async function answerQ(q) {
+  let ans = "";
+  if (q === "repeat") ans = current_task.pronunciation;
+  else if (q === "definition") ans = current_task.definition;
+  else if (q === "part") ans = current_task.part;
+  else if (q === "example") ans = current_task.example;
 
+  set_dialog(ans);
+  if (q === "repeat") await speak(current_task.word);
+  else await speak(ans);
+  recognizer.recognize(dialog, mic, lastRecognizeOptions);
+}
 
 // Replace start_answer_loop() with this:
 async function start_answer_loop() {
-    clear_dialog();
+  clear_dialog();
   clearInterval(answer_loop);
   clearInterval(spell_loop);
   recognizer.textClear();
@@ -80,9 +85,13 @@ async function start_answer_loop() {
 
   seconds = 0;
   // show the prompt in dialog BEFORE speech so users see it
-  set_dialog(`Your word is ${current_task.pronunciation}. You have ${phase1} seconds to ask questions`);
+  set_dialog(
+    `Your word is ${current_task.pronunciation}. You have ${phase1} seconds to ask questions`
+  );
   // speak and wait for it to finish (recognizer remains stopped during speak)
-  await speak(`Your word is ${current_task.word}. You have ${phase1} seconds to ask questions`);
+  await speak(
+    `Your word is ${current_task.word}. You have ${phase1} seconds to ask questions`
+  );
 
   // now start recognition AFTER speech finishes
   recognizer.recognize(dialog, mic, lastRecognizeOptions);
@@ -90,16 +99,28 @@ async function start_answer_loop() {
   // start the answer polling loop
   answer_loop = setInterval(() => {
     let answered = false;
-    if (recognizer.textIncludes('part of speech') || recognizer.textIncludes('part')) { answerQ('part'); answered = true; }
-    else if (recognizer.textIncludes('repeat')) { answerQ('repeat'); answered = true; }
-    else if (recognizer.textIncludes('definition')) { answerQ('definition'); answered = true; }
-    else if (recognizer.textIncludes('example')) { answerQ('example'); answered = true; }
+    if (
+      recognizer.textIncludes("part of speech") ||
+      recognizer.textIncludes("part")
+    ) {
+      answerQ("part");
+      answered = true;
+    } else if (recognizer.textIncludes("repeat")) {
+      answerQ("repeat");
+      answered = true;
+    } else if (recognizer.textIncludes("definition")) {
+      answerQ("definition");
+      answered = true;
+    } else if (recognizer.textIncludes("example")) {
+      answerQ("example");
+      answered = true;
+    }
 
     if (answered) recognizer.textClear();
 
     // advance timer and check transition
     seconds += 0.5;
-    set_time_bar(Math.round(seconds * 100 / phase1));
+    set_time_bar(Math.round((seconds * 100) / phase1));
 
     if (seconds >= phase1 || recognizer.textIncludes(current_task.word)) {
       clearInterval(answer_loop);
@@ -115,59 +136,74 @@ async function start_spell_loop() {
 
   // show instruction before speech
   set_dialog(`Spell the word carefully. You have ${phase2} seconds.`);
-  // speak and wait — recognizer is stopped during speak
   await speak(`Spell the word carefully. You have ${phase2} seconds.`);
 
-  // after speak finishes, start alphabet-prioritized recognition
+  // start alphabet recognition
   lastRecognizeOptions = { prioritizeAlphabet: true, showDebug: true };
   recognizer.recognize(dialog, mic, lastRecognizeOptions);
 
-  // start spell polling
   seconds = 0;
-  spell_loop = setInterval(() => {
-    // show live spelling (letters without spaces)
-    // const spelling = recognizer.getFinalText().replace(/\s+/g, '');
-    // if (spelling) {
-    //   set_dialog('Spelling: ' + spelling);
-    // }
 
-    seconds += 0.25; // faster steps
-    set_time_bar(Math.round(seconds * 100 / phase2));
+  spell_loop = setInterval(() => {
+    seconds += 0.25;
+    set_time_bar(Math.round((seconds * 100) / phase2));
+
+    // get live spelling
+    const liveSpelling = recognizer.getFinalText().replace(/\s+/g, "");
+
+    // ★★★★★ AUTO-END IF COMPLETE ★★★★★
+    if (
+      liveSpelling.length > 0 &&
+      liveSpelling.toLowerCase() === current_task.word.toLowerCase()
+    ) {
+      clearInterval(spell_loop);
+      recognizer.stopRecognize();
+      const finalSpelling = liveSpelling;
+
+      if (finalSpelling.toLowerCase() === current_task.word.toLowerCase()) {
+        add_dailog("\nCorrect! You spelled " + finalSpelling);
+      } else {
+        add_dailog("\nWrong spelling! " + current_task.word);
+      }
+
+      add_dailog("\nSay next to spell next word");
+      start_wait_loop();
+      return;
+    }
+
+    // time limit check
     if (seconds >= phase2) {
       clearInterval(spell_loop);
-      // evaluate spelling
-      const finalSpelling = recognizer.getFinalText().replace(/\s+/g, '');
-      set_dialog('Time up! You spelled: ' + finalSpelling);
-      if (finalSpelling.toLowerCase() == current_task.word.toLowerCase()) {
+      recognizer.stopRecognize();
+
+      const finalSpelling = liveSpelling;
+      set_dialog("Time up! You spelled: " + finalSpelling);
+
+      if (finalSpelling.toLowerCase() === current_task.word.toLowerCase()) {
         add_dailog("\nCorrect");
       } else {
         add_dailog("\nWrong spelling! " + current_task.word);
       }
+
       add_dailog("\nSay next to spell next word");
-      
       start_wait_loop();
     }
   }, 250);
 }
 
+async function start_wait_loop() {
+  await speak(dialog.innerText);
+  lastRecognizeOptions = { prioritizeAlphabet: false, showDebug: true };
+  recognizer.recognize(dialog, mic, lastRecognizeOptions);
 
-
-
-async function start_wait_loop(){
-    await speak(dialog.innerText);
-    lastRecognizeOptions = { prioritizeAlphabet: false, showDebug: true };
-    recognizer.recognize(dialog, mic, lastRecognizeOptions);
-
-    let wait_loop = setInterval(() => 
-    {
-        if(recognizer.textIncludes("next"))
-        {
-            clearInterval(wait_loop);
-            current_idx = (current_idx + 1) % 4;
-            current_task = data[current_idx];
-            start_answer_loop();
-        }
-    }, 500);
+  let wait_loop = setInterval(() => {
+    if (recognizer.textIncludes("next")) {
+      clearInterval(wait_loop);
+      current_idx = (current_idx + 1) % 4;
+      current_task = data[current_idx];
+      start_answer_loop();
+    }
+  }, 500);
 }
 
 // start

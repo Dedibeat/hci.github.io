@@ -114,6 +114,8 @@ const phoneticMap = {
   zed: "Z",
 };
 
+
+
 // 🔵 Keep only letters A–Z
 function filterAlphabetOnly(str) {
   if (!str) return "";
@@ -126,18 +128,30 @@ function interpretLetters(rawText) {
     .toLowerCase()
     .replace(/[^a-z\s-]+/g, " ")
     .trim();
+
   const tokens = rawText.split(/\s+/).filter(Boolean);
   const letters = [];
 
   for (let tok of tokens) {
-    if (phoneticMap[tok]) letters.push(phoneticMap[tok]);
-    else if (/^[a-z]$/.test(tok)) letters.push(tok.toUpperCase());
-    else if (/^[a-z]+$/.test(tok))
-      for (let ch of tok) letters.push(ch.toUpperCase());
+    // Exact phonetic → always allowed
+    if (phoneticMap[tok]) {
+      letters.push(phoneticMap[tok]);
+      continue;
+    }
+
+    // Single isolated letter “a”, “b”, “c”
+    if (/^[a-z]$/.test(tok)) {
+      letters.push(tok.toUpperCase());
+      continue;
+    }
+
+    // ❌ Anything longer than 1 character → ignore
+    // (prevents "apple" → "APPLE")
   }
 
-  return letters.join(""); // e.g. "APPLE"
+  return letters.join(""); // result: "ABC"
 }
+
 
 function pickBestAlternative(result, prioritizeAlphabet) {
   let best = "";
@@ -253,13 +267,14 @@ export function recognize(dialog, mic, opts = {}) {
   if (!recognition) return;
   dialogEl = dialog;
   micEl = mic;
-  currentOptions = Object.assign({}, currentOptions, opts);
 
+  currentOptions.prioritizeAlphabet = opts.prioritizeAlphabet
+  currentOptions.showDebug = opts.showDebug
+  // If already recognizing, update display but do not restart
   if (isRecognizing) {
     if (dialogEl && !finalText.trim()) dialogEl.innerHTML = "🎙️ Listening...";
     return;
   }
-
   try {
     recognition.start();
   } catch (err) {
