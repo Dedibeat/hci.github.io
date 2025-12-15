@@ -1,333 +1,228 @@
-// spellbee.main.js
-// Refactored, modular Spell Bee game main file.
-// - Encapsulates state in a SpellBeeGame class
-// - Uses phases/enum and a single polling loop (configurable)
-// - Keeps recognizer interactions isolated
-// - Provides clear lifecycle: start(), stop(), next()
+// === script.js ===
+// Frontend-only spelling bee game (no backend, stable)
 
 import * as recognizer from "./recognizer.js";
 import { data } from "./data.js";
 
-// Configurable phases (seconds)
-const PHASES = {
-  ANSWER: { name: "answer", seconds: 60 },
-  SPELL: { name: "spell", seconds: 20 },
-  WAIT: { name: "wait", seconds: 10 }
+const time_progress = document.querySelector(".time-progress");
+const mic = document.getElementById("mic");
+const dialog = document.getElementById("bee-text");
+
+const PHASE_ASK = 60;   // seconds
+const PHASE_SPELL = 20;
+
+let current_idx = 0;
+let current_task = data[0];
+
+let seconds = 0;
+let answer_loop = null;
+let spell_loop = null;
+let gameStarted = false;
+
+let lastRecognizeOptions = {
+  prioritizeAlphabet: false,
+  showDebug: false
 };
 
-// Utility TTS wrapper that ensures recognizer is stopped while speaking
-async function speak(text, { rate = 1, pitch = 1, bufferMs = 400 } = {}) {
-  return new Promise((resolve, reject) => {
-    try {
-      recognizer.stopRecognize();
-
-      const utter = new SpeechSynthesisUtterance(text);
-      utter.lang = "en-US";
-      utter.rate = rate;
-      utter.pitch = pitch;
-
-      utter.onend = () => setTimeout(resolve, bufferMs);
-      utter.onerror = (e) => reject(e);
-
-      speechSynthesis.speak(utter);
-    } catch (err) {
-      reject(err);
-    }
+// ===============================
+// INIT
+// ===============================
+export function init_game_start() {
+  mic.addEventListener("click", () => {
+    if (gameStarted) return;
+    gameStarted = true;
+    mic.classList.add("active");
+    start_answer_loop();
   });
 }
 
-class SpellBeeGame {
-  constructor({
-    container = document,
-    dataList = data,
-    recognizerModule = recognizer,
-    selectors = {
-      timeProgress: ".time-progress",
-      mic: "#mic",
-      dialog: "#bee-text"
-    },
-    pollingIntervalMs = 250
-  } = {}) {
-    this.data = dataList;
-    this.recognizer = recognizerModule;
+// ===============================
+// SPEECH (TTS-safe)
+// ===============================
+function speak(text, rate = 1, pitch = 1) {
+  return new Promise((resolve) => {
+    recognizer.stopRecognize(); // always stop before speaking
 
-    // UI nodes
-    this.timeProgress = container.querySelector(selectors.timeProgress);
-    this.mic = container.querySelector(selectors.mic);
-    this.dialog = container.querySelector(selectors.dialog);
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = "en-US";
+    utter.rate = rate;
+    utter.pitch = pitch;
 
-    // internal state
-    this.currentIdx = 0;
-    this.currentTask = this.data[this.currentIdx];
-    this.state = "idle"; // idle | answer | spell | wait
-    this.seconds = 0;
-    this._poller = null;
-    this._pollInterval = pollingIntervalMs;
-    this._lastRecognizeOptions = { prioritizeAlphabet: false, showDebug: true };
-    this.gameStarted = false;
-
-    // bind handlers
-    this._onMicClick = this._onMicClick.bind(this);
-    this._poll = this._poll.bind(this);
-  }
-
-  init() {
-    // attach events
-    if (this.mic) this.mic.addEventListener("click", this._onMicClick);
-
-    this._setTimeBar(0);
-    this._requestMicPermission();
-
-    // keep recognizer clean
-    this.recognizer.textClear && this.recognizer.textClear();
-  }
-
-  destroy() {
-    // cleanup
-    if (this.mic) this.mic.removeEventListener("click", this._onMicClick);
-    this.stop();
-  }
-
-  async start() {
-    if (this.gameStarted) return;
-    this.gameStarted = true;
-    this._setActive(true);
-    await this._startAnswerPhase();
-    this._startPoller();
-  }
-
-  stop() {
-    this.gameStarted = false;
-    this._setActive(false);
-    this._clearPoller();
-    this.recognizer.stopRecognize && this.recognizer.stopRecognize();
-  }
-
-  next() {
-    this.currentIdx = (this.currentIdx + 1) % this.data.length;
-    this.currentTask = this.data[this.currentIdx];
-    this._transitionToAnswer();
-  }
-
-  // ----- internal helpers -----
-  _onMicClick() {
-    if (!this.gameStarted) this.start();
-    else {
-      // allow mic toggling behavior in future
-    }
-  }
-
-  _setActive(active) {
-    if (!this.mic) return;
-    this.mic.classList.toggle("active", !!active);
-  }
-
-  _setDialog(text) {
-    if (!this.dialog) return;
-    this.dialog.innerText = text;
-  }
-
-  _appendDialog(text) {
-    if (!this.dialog) return;
-    this.dialog.innerText += "\n" + text;
-  }
-
-  _setTimeBar(percent) {
-    if (!this.timeProgress) return;
-    this.timeProgress.style.width = percent + "%";
-  }
-
-  async _requestMicPermission() {
-    try {
-      await navigator.mediaDevices.getUserMedia({ audio: true });
-      console.log("Microphone permission granted!");
-    } catch (err) {
-      console.warn("Microphone permission denied:", err);
-      alert("Please allow microphone access to play the spelling game.");
-    }
-  }
-
-  // ---- Phase transitions ----
-  async _startAnswerPhase() {
-    this.state = "answer";
-    this.seconds = 0;
-
-    this._lastRecognizeOptions = { prioritizeAlphabet: false, showDebug: true };
-
-    this._setDialog(`Your word is ${this.currentTask.pronunciation}. You have ${PHASES.ANSWER.seconds} seconds to ask questions`);
-
-    // speak prompt then start recognition
-    await speak(`Your word is ${this.currentTask.word}. You have ${PHASES.ANSWER.seconds} seconds to ask questions`);
-
-    // start recognition after TTS
-    this.recognizer.recognize && this.recognizer.recognize(this.dialog, this.mic, this._lastRecognizeOptions);
-  }
-
-  async _startSpellPhase() {
-    this.state = "spell";
-    this.seconds = 0;
-
-    this._lastRecognizeOptions = { prioritizeAlphabet: true, showDebug: true };
-
-    this._setDialog(`Spell the word carefully. You have ${PHASES.SPELL.seconds} seconds.`);
-    await speak(`Spell the word carefully. You have ${PHASES.SPELL.seconds} seconds.`);
-
-    this.recognizer.recognize && this.recognizer.recognize(this.dialog, this.mic, this._lastRecognizeOptions);
-  }
-
-  async _startWaitPhase() {
-    this.state = "wait";
-    this.seconds = 0;
-
-    // announce dialog contents and listen for 'next'
-    await speak(this.dialog.innerText || "Say next to continue");
-
-    this._lastRecognizeOptions = { prioritizeAlphabet: false, showDebug: true };
-    this.recognizer.recognize && this.recognizer.recognize(this.dialog, this.mic, this._lastRecognizeOptions);
-  }
-
-  _transitionToAnswer() {
-    // safely stop recognizer and switch to answer phase
-    this.recognizer.stopRecognize && this.recognizer.stopRecognize();
-    this._startAnswerPhase();
-  }
-
-  _startPoller() {
-    if (this._poller) this._clearPoller();
-    this._poller = setInterval(this._poll, this._pollInterval);
-  }
-
-  _clearPoller() {
-    if (!this._poller) return;
-    clearInterval(this._poller);
-    this._poller = null;
-  }
-
-  _endCurrentPhaseAndStartNext() {
-    // Stop recognizer for the transition
-    this.recognizer.stopRecognize && this.recognizer.stopRecognize();
-
-    if (this.state === "answer") this._startSpellPhase();
-    else if (this.state === "spell") this._startWaitPhase();
-    else if (this.state === "wait") {
-      // default: go to next word and answer phase
-      this.next();
-    }
-  }
-
-  // central poller checks recognizer text and timers
-  _poll() {
-    // update time and bar
-    const phaseDuration = this._getPhaseDuration();
-    if (phaseDuration > 0) {
-      // increment time according to poll interval
-      this.seconds += this._pollInterval / 1000;
-      this._setTimeBar(Math.round((this.seconds * 100) / phaseDuration));
-    }
-
-    // check phase-specific triggers
-    if (this.state === "answer") {
-      // recognized queries
-      if (this.recognizer.textIncludes("part of speech") || this.recognizer.textIncludes("part")) {
-        this._answerQ("part");
-        this.recognizer.textClear && this.recognizer.textClear();
-      } else if (this.recognizer.textIncludes("repeat")) {
-        this._answerQ("repeat");
-        this.recognizer.textClear && this.recognizer.textClear();
-      } else if (this.recognizer.textIncludes("definition")) {
-        this._answerQ("definition");
-        this.recognizer.textClear && this.recognizer.textClear();
-      } else if (this.recognizer.textIncludes("example") || this.recognizer.textIncludes("sentence")) {
-        this._answerQ("example");
-        this.recognizer.textClear && this.recognizer.textClear();
-      }
-
-      // if student says the word or time up -> go to spell
-      if (this.recognizer.textIncludes(this.currentTask.word) || this.seconds >= PHASES.ANSWER.seconds) {
-        this._endCurrentPhaseAndStartNext();
-      }
-    } else if (this.state === "spell") {
-      // get live spelling without whitespace
-      const liveSpelling = (this.recognizer.getFinalText && this.recognizer.getFinalText() || "").replace(/\s+/g, "");
-
-      // guard: too long -> wrong
-      if (liveSpelling.length > this.currentTask.word.length) {
-        this._appendDialog("You spelled: " + liveSpelling);
-        this._appendDialog("Wrong spelling! " + this.currentTask.word);
-        this._appendDialog("Say next to spell next word");
-        this._endCurrentPhaseAndStartNext();
-        return;
-      }
-
-      if (liveSpelling && liveSpelling.toLowerCase() === this.currentTask.word.toLowerCase()) {
-        this._appendDialog("Correct! You spelled " + liveSpelling);
-        this._appendDialog("Say next to spell next word");
-        this._endCurrentPhaseAndStartNext();
-        return;
-      }
-
-      if (this.seconds >= PHASES.SPELL.seconds) {
-        const finalSpelling = liveSpelling;
-        this._setDialog("Time up! You spelled: " + finalSpelling);
-        if (finalSpelling.toLowerCase() === this.currentTask.word.toLowerCase()) {
-          this._appendDialog("Correct");
-        } else {
-          this._appendDialog("Wrong spelling! " + this.currentTask.word);
-        }
-        this._appendDialog("Say next to spell next word");
-        this._endCurrentPhaseAndStartNext();
-      }
-    } else if (this.state === "wait") {
-      if (this.recognizer.textIncludes("next")) {
-        this.recognizer.textClear && this.recognizer.textClear();
-        this.next();
-      }
-
-      // optional timeout for wait phase
-      if (this.seconds >= PHASES.WAIT.seconds) {
-        this.next();
-      }
-    }
-  }
-
-  _getPhaseDuration() {
-    if (this.state === "answer") return PHASES.ANSWER.seconds;
-    if (this.state === "spell") return PHASES.SPELL.seconds;
-    if (this.state === "wait") return PHASES.WAIT.seconds;
-    return 0;
-  }
-
-  async _answerQ(type) {
-    let ans = "";
-    if (type === "repeat") ans = this.currentTask.pronunciation;
-    else if (type === "definition") ans = this.currentTask.definition;
-    else if (type === "part") ans = this.currentTask.part;
-    else if (type === "example") ans = this.currentTask.example;
-
-    this._setDialog(ans);
-    if (type === "repeat") await speak(this.currentTask.word);
-    else await speak(ans);
-
-    // resume recognition (caller expects recognizer to be running)
-    this.recognizer.recognize && this.recognizer.recognize(this.dialog, this.mic, this._lastRecognizeOptions);
-  }
-}
-
-// ---- Exported factory for ease of use -----
-export function createSpellBeeGame(opts = {}) {
-  const game = new SpellBeeGame(opts);
-  game.init();
-  return game;
-}
-
-// Example auto-init when included as main script
-if (document.readyState !== "loading") {
-  const game = createSpellBeeGame();
-  // expose for debugging
-  window.spellBeeGame = game;
-} else {
-  document.addEventListener("DOMContentLoaded", () => {
-    const game = createSpellBeeGame();
-    window.spellBeeGame = game;
+    utter.onend = () => setTimeout(resolve, 400);
+    speechSynthesis.speak(utter);
   });
 }
+
+// ===============================
+// UI HELPERS
+// ===============================
+function set_dialog(t) {
+  dialog.innerText = t;
+}
+function add_dialog(t) {
+  dialog.innerText += "\n" + t;
+}
+function clear_dialog() {
+  dialog.innerText = "";
+}
+function set_time_bar(p) {
+  time_progress.style.width = Math.min(100, p) + "%";
+}
+
+// ===============================
+// ANSWER QUESTIONS
+// ===============================
+async function answerQ(type) {
+  let ans = "";
+  if (type === "repeat") ans = current_task.pronunciation;
+  else if (type === "definition") ans = current_task.definition;
+  else if (type === "part") ans = current_task.part;
+  else if (type === "example") ans = current_task.example;
+
+  set_dialog(ans);
+  await speak(type === "repeat" ? current_task.word : ans);
+
+  recognizer.recognize(dialog, mic, lastRecognizeOptions);
+}
+
+// ===============================
+// PHASE 1 — ASK
+// ===============================
+async function start_answer_loop() {
+  clear_dialog();
+  clearInterval(answer_loop);
+  clearInterval(spell_loop);
+  recognizer.textClear();
+
+  lastRecognizeOptions = { prioritizeAlphabet: false, showDebug: false };
+  seconds = 0;
+
+  set_dialog(
+    `Your word is ${current_task.pronunciation}. You have ${PHASE_ASK} seconds to ask questions`
+  );
+
+  await speak(
+    `Your word is ${current_task.word}. You have ${PHASE_ASK} seconds to ask questions`
+  );
+
+  recognizer.recognize(dialog, mic, lastRecognizeOptions);
+
+  answer_loop = setInterval(() => {
+    let answered = false;
+
+    if (recognizer.textIncludes("part")) {
+      answerQ("part"); answered = true;
+    } else if (recognizer.textIncludes("repeat")) {
+      answerQ("repeat"); answered = true;
+    } else if (recognizer.textIncludes("definition")) {
+      answerQ("definition"); answered = true;
+    } else if (
+      recognizer.textIncludes("example") ||
+      recognizer.textIncludes("sentence")
+    ) {
+      answerQ("example"); answered = true;
+    }
+
+    if (answered) recognizer.textClear();
+
+    seconds += 0.5;
+    set_time_bar((seconds / PHASE_ASK) * 100);
+
+    if (
+      seconds >= PHASE_ASK ||
+      recognizer.textIncludes(current_task.word)
+    ) {
+      clearInterval(answer_loop);
+      start_spell_loop();
+    }
+  }, 500);
+}
+
+// ===============================
+// PHASE 2 — SPELL
+// ===============================
+async function start_spell_loop() {
+  clearInterval(spell_loop);
+  recognizer.textClear();
+
+  set_dialog(`Spell the word carefully. You have ${PHASE_SPELL} seconds.`);
+  await speak(`Spell the word carefully. You have ${PHASE_SPELL} seconds.`);
+
+  lastRecognizeOptions = { prioritizeAlphabet: true, showDebug: false };
+  recognizer.recognize(dialog, mic, lastRecognizeOptions);
+
+  seconds = 0;
+
+  spell_loop = setInterval(() => {
+    seconds += 0.25;
+    set_time_bar((seconds / PHASE_SPELL) * 100);
+
+    const spelled = recognizer.getFinalText().replace(/\s+/g, "");
+    const target = current_task.word.toLowerCase();
+
+    // Too long → fail early
+    if (spelled.length > target.length) {
+      end_spell(false, spelled);
+      return;
+    }
+
+    // Correct
+    if (spelled.toLowerCase() === target) {
+      end_spell(true, spelled);
+      return;
+    }
+
+    // Time up
+    if (seconds >= PHASE_SPELL) {
+      end_spell(spelled.toLowerCase() === target, spelled);
+    }
+  }, 250);
+}
+
+function end_spell(correct, spelled) {
+  clearInterval(spell_loop);
+  recognizer.stopRecognize();
+
+  if (correct) {
+    add_dialog(`Correct! You spelled ${spelled}`);
+  } else {
+    add_dialog(`Wrong spelling! The word was ${current_task.word}`);
+  }
+
+  add_dialog("Say next to continue");
+  start_wait_loop();
+}
+
+// ===============================
+// PHASE 3 — WAIT
+// ===============================
+async function start_wait_loop() {
+  await speak(dialog.innerText);
+
+  lastRecognizeOptions = { prioritizeAlphabet: false, showDebug: false };
+  recognizer.recognize(dialog, mic, lastRecognizeOptions);
+
+  const wait_loop = setInterval(() => {
+    if (recognizer.textIncludes("next")) {
+      clearInterval(wait_loop);
+      recognizer.textClear();
+
+      current_idx = (current_idx + 1) % data.length;
+      current_task = data[current_idx];
+      start_answer_loop();
+    }
+  }, 500);
+}
+
+// ===============================
+// MIC PERMISSION
+// ===============================
+(async function requestMicPermission() {
+  try {
+    await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch {
+    alert("Please allow microphone access.");
+  }
+})();
+
+set_time_bar(0);
